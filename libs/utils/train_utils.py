@@ -180,7 +180,6 @@ def make_scheduler(
             scheduler = optim.lr_scheduler.MultiStepLR(
                 optimizer,
                 steps,
-                gamma=schedule_config["gamma"],
                 last_epoch=last_epoch
             )
         else:
@@ -387,7 +386,7 @@ def valid_one_epoch(
     start = time.time()
     for iter_idx, video_list in enumerate(val_loader, 0):
         # forward the model (wo. grad)
-        with torch.no_grad():
+        with torch.inference_mode():
             output = model(video_list)
 
             # unpack the results into ANet format

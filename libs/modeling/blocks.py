@@ -7,6 +7,122 @@ from torch import nn
 from .weight_init import trunc_normal_
 
 
+class LTSBlock(nn.Module):
+    def __init__(
+            self,
+            n_embd,
+            kernel_size,
+            stride = 1,
+            dilation = 1,
+            path_pdrop=0.0,  # drop path rate
+            **kwargs
+    ):
+        super().__init__()
+
+        assert (kernel_size % 2 == 1)
+        self.kernel_size = kernel_size
+        self.stride = stride
+        self.dilation = dilation
+        self.pad = ((self.kernel_size - 1) * self.dilation)
+
+        self.ln = LayerNorm(n_embd)
+        self.ln2 = LayerNorm(n_embd)
+        self.ln_stack = LayerNorm(n_embd*2)
+        self.gn = nn.GroupNorm(16, n_embd)
+
+        self.downsample = nn.Identity() if self.stride==1 else nn.MaxPool1d(1, self.stride, 0)
+
+        # Capture long-range dependencies
+        self.conv1 = nn.Conv1d(n_embd, n_embd, kernel_size=self.kernel_size, stride=1, padding=self.pad, dilation=self.dilation)
+        self.max1 = nn.MaxPool1d(kernel_size=self.kernel_size, stride=1, padding=self.kernel_size//2, dilation=1)
+
+        # Capture short-range dependencies
+        self.conv2 = nn.Conv1d(n_embd, n_embd, kernel_size=1, stride=1, padding=0, dilation=1)
+        self.max2 = nn.MaxPool1d(kernel_size=1, stride=1, padding=0, dilation=1)
+
+        self.mlp_stack = nn.Sequential(
+             nn.Conv1d(n_embd*2, n_embd, 1),
+             nn.GELU(),
+             nn.Conv1d(n_embd, n_embd, 1),
+         )
+
+        self.mlp = nn.Sequential(
+            nn.Conv1d(n_embd, n_embd, 1),
+            nn.ReLU(),
+            nn.Conv1d(n_embd, n_embd, 1),
+        )
+
+        # drop path
+        if path_pdrop > 0.0:
+            self.drop_path_out = AffineDropPath(n_embd, drop_prob = path_pdrop)
+            self.drop_path_mlp = AffineDropPath(n_embd, drop_prob = path_pdrop)
+        else:
+            self.drop_path_out = nn.Identity()
+            self.drop_path_mlp = nn.Identity()
+
+        self.reset_params()
+            
+    def reset_params(self, init_conv_vars=0):
+        for name, layer in self.named_children():
+            if isinstance(layer, nn.Conv1d):
+                nn.init.normal_(layer.weight, 0, init_conv_vars)
+            if isinstance(layer, nn.Sequential):
+                for module in layer:
+                    if isinstance(module, nn.Conv1d): 
+                        nn.init.normal_(module.weight, 0, init_conv_vars)
+                    if hasattr(module, 'bias') and module.bias is not None: 
+                        nn.init.constant_(module.bias, 0)
+            if hasattr(layer, 'bias') and layer.bias is not None:
+                nn.init.constant_(layer.bias, 0)
+
+
+    def forward(self, x, mask, out_feats=None):
+        B, C, T = x.shape
+        
+        x = self.downsample(x)
+
+        out_mask = F.interpolate(
+            mask.to(x.dtype),
+            size=torch.div(T, self.stride, rounding_mode='trunc'),
+            mode='nearest'
+        ).detach()
+
+        if out_feats:
+            temp = torch.zeros_like(x)
+            for i in range(len(out_feats)): 
+                y = len(out_feats)-i
+                temp += out_feats[i][:, :, ::(2**y)]
+            cumulative = self.gn(temp * out_mask)
+
+        out = self.ln(x)
+
+        max1 = self.max1(out)
+        conv1 = self.conv1(out)
+        if self.conv1.padding[0] != 0:
+            conv1 = conv1[:, :, :-self.conv1.padding[0]]  # remove trailing padding
+        out_l = (max1 * conv1) * out_mask
+        
+        max2 = self.max2(out)
+        conv2 = self.conv2(out)
+        if self.conv2.padding[0] != 0:
+            conv2 = conv2[:, :, :-self.conv2.padding[0]]  # remove trailing padding
+        out_s = (max2 * conv2) * out_mask
+
+        stacked = torch.hstack((out_s, out_l))
+        stacked = self.drop_path_mlp(self.mlp_stack(self.ln_stack(stacked)))
+
+        out = x * out_mask + stacked
+
+        if out_feats:
+            out += cumulative
+            
+        # FFN
+        out = out + self.drop_path_mlp(self.mlp(self.ln2(out)))
+
+        return out, out_mask.bool()
+
+
+
 class MaskedConv1D(nn.Module):
     """
     Masked 1D convolution. Interface remains the same as Conv1d.

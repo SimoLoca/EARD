@@ -10,7 +10,7 @@ from .losses import ctr_diou_loss_1d, sigmoid_focal_loss
 
 from ..utils import batched_nms
 
-class PtTransformerClsHead(nn.Module):
+class ClassificationHead(nn.Module):
     """
     1D Conv heads for classification
     """
@@ -33,12 +33,8 @@ class PtTransformerClsHead(nn.Module):
         self.head = nn.ModuleList()
         self.norm = nn.ModuleList()
         for idx in range(num_layers-1):
-            if idx == 0:
-                in_dim = input_dim
-                out_dim = feat_dim
-            else:
-                in_dim = feat_dim
-                out_dim = feat_dim
+            in_dim = input_dim if idx == 0 else feat_dim
+            out_dim = feat_dim
             self.head.append(
                 MaskedConv1D(
                     in_dim, out_dim, kernel_size,
@@ -88,8 +84,7 @@ class PtTransformerClsHead(nn.Module):
         # fpn_masks remains the same
         return out_logits
 
-
-class PtTransformerRegHead(nn.Module):
+class RegressionHead(nn.Module):
     """
     Shared 1D Conv heads for regression
     Simlar logic as PtTransformerClsHead with separated implementation for clarity
@@ -111,13 +106,9 @@ class PtTransformerRegHead(nn.Module):
         # build the conv head
         self.head = nn.ModuleList()
         self.norm = nn.ModuleList()
-        for idx in range(num_layers-1):
-            if idx == 0:
-                in_dim = input_dim
-                out_dim = feat_dim
-            else:
-                in_dim = feat_dim
-                out_dim = feat_dim
+        for idx in range(num_layers-1): 
+            in_dim = input_dim if idx == 0 else feat_dim
+            out_dim = feat_dim
             self.head.append(
                 MaskedConv1D(
                     in_dim, out_dim, kernel_size,
@@ -244,7 +235,7 @@ class PtTransformer(nn.Module):
 
         # we will need a better way to dispatch the params to backbones / necks
         # backbone network: conv + transformer
-        assert backbone_type in ['convTransformer', 'conv']
+        assert backbone_type in ['convTransformer', 'conv', 'LongToShort']
         if backbone_type == 'convTransformer':
             self.backbone = make_backbone(
                 'convTransformer',
@@ -263,6 +254,22 @@ class PtTransformer(nn.Module):
                     'path_pdrop' : self.train_droppath,
                     'use_abs_pe' : use_abs_pe,
                     'use_rel_pe' : use_rel_pe
+                }
+            )
+        elif backbone_type == 'LongToShort':
+            self.win_size = [3] * len(self.fpn_strides)
+            self.backbone = make_backbone(
+                'LongToShort',
+                **{
+                    'n_in': input_dim,
+                    'n_embd': embd_dim,
+                    'n_embd_ks': embd_kernel_size,
+                    'arch': backbone_arch,
+                    'with_ln' : embd_with_ln,
+                    'max_len': max_seq_len,
+                    'use_abs_pe' : use_abs_pe,
+                    'win_size': self.win_size,
+                    'path_pdrop' : self.train_droppath
                 }
             )
         else:
@@ -304,7 +311,7 @@ class PtTransformer(nn.Module):
         )
 
         # classfication and regerssion heads
-        self.cls_head = PtTransformerClsHead(
+        self.cls_head = ClassificationHead(
             fpn_dim, head_dim, self.num_classes,
             kernel_size=head_kernel_size,
             prior_prob=self.train_cls_prior_prob,
@@ -312,7 +319,7 @@ class PtTransformer(nn.Module):
             num_layers=head_num_layers,
             empty_cls=train_cfg['head_empty_cls']
         )
-        self.reg_head = PtTransformerRegHead(
+        self.reg_head = RegressionHead(
             fpn_dim, head_dim, len(self.fpn_strides),
             kernel_size=head_kernel_size,
             num_layers=head_num_layers,
@@ -418,7 +425,7 @@ class PtTransformer(nn.Module):
                 feats[0], padding_size, value=padding_val).unsqueeze(0)
 
         # generate the mask
-        batched_masks = torch.arange(max_len)[None, :] < feats_lens[:, None]
+        batched_masks = torch.arange(max_len)[None, :] < feats_lens[:, None]    # will result in a boolean tensor which its values are true till the max_len of the video features
 
         # push to device
         batched_inputs = batched_inputs.to(self.device)
@@ -594,7 +601,7 @@ class PtTransformer(nn.Module):
                 'reg_loss'   : reg_loss,
                 'final_loss' : final_loss}
 
-    @torch.no_grad()
+    @torch.inference_mode()
     def inference(
         self,
         video_list,
@@ -640,7 +647,7 @@ class PtTransformer(nn.Module):
 
         return results
 
-    @torch.no_grad()
+    @torch.inference_mode()
     def inference_single_video(
         self,
         points,
@@ -669,9 +676,8 @@ class PtTransformer(nn.Module):
 
             # 2. Keep top k top scoring boxes only
             num_topk = min(self.test_pre_nms_topk, topk_idxs.size(0))
-            pred_prob, idxs = pred_prob.sort(descending=True)
-            pred_prob = pred_prob[:num_topk].clone()
-            topk_idxs = topk_idxs[idxs[:num_topk]].clone()
+            pred_prob, topk_indices = torch.topk(pred_prob, num_topk)
+            topk_idxs = topk_idxs[topk_indices].clone()
 
             # fix a warning in pytorch 1.9
             pt_idxs =  torch.div(
@@ -707,7 +713,7 @@ class PtTransformer(nn.Module):
 
         return results
 
-    @torch.no_grad()
+    @torch.inference_mode()
     def postprocessing(self, results):
         # input : list of dictionary items
         # (1) push to CPU; (2) NMS; (3) convert to actual time stamps

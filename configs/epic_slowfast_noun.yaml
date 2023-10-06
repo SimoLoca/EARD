@@ -19,12 +19,13 @@ model: {
   regression_range: [[0, 4], [2, 8], [4, 16], [8, 32], [16, 64], [32, 10000]],
   fpn_type: identity,
   max_buffer_len_factor: 4.0,
-  n_mha_win_size: 9,
+  backbone_type: LongToShort,
 }
 opt: {
   learning_rate: 0.0001,
-  epochs: 16,
+  epochs: 22,
   weight_decay: 0.05,
+  warmup_epochs: 6,
 }
 loader: {
   batch_size: 2,
@@ -36,6 +37,7 @@ train_cfg: {
   center_sample: radius,
   center_sample_radius: 1.5,
   label_smoothing: 0.1,
+  droppath: 0.15
 }
 test_cfg: {
   pre_nms_topk: 5000,

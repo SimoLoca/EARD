@@ -38,7 +38,11 @@ def main(args):
             )
         else:
             ckpt_file_list = sorted(glob.glob(os.path.join(args.ckpt, '*.pth.tar')))
-            ckpt_file = ckpt_file_list[-1]
+            idx = [i for i, string in enumerate(ckpt_file_list) if 'best' in string]
+            if idx:
+                ckpt_file = ckpt_file_list[idx[0]]
+            else:
+                ckpt_file = ckpt_file_list[-1]
         assert os.path.exists(ckpt_file)
 
     if args.topk > 0:
@@ -89,7 +93,7 @@ def main(args):
         output_file = os.path.join(os.path.split(ckpt_file)[0], 'eval_results.pkl')
 
     """5. Test the model"""
-    print("\nStart testing model {:s} ...".format(cfg['model_name']))
+    print("\nStart testing model {:s} ...".format("LocPointLongToShort"))
     start = time.time()
     mAP = valid_one_epoch(
         val_loader,

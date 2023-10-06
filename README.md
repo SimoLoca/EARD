@@ -3,7 +3,7 @@ Master Thesis 2022-2023 about Egocentric Activity Recognition and Detection usin
 
 Our code is built upon the codebase from [ActionFormer](https://github.com/happyharrycn/actionformer_release) and [Detectron2](https://github.com/facebookresearch/detectron2).
 
-# Requirements
+## Requirements
 
 - Linux (Ubuntu 22.04)
 - Python 3.5+ (3.10.6)
@@ -21,7 +21,7 @@ Our code is built upon the codebase from [ActionFormer](https://github.com/happy
 pip install  -r requirements.txt
 ```
 
-# Compilation
+## Compilation
 
 Part of NMS is implemented in C++. The code can be compiled by
 
