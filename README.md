@@ -3,6 +3,8 @@ Master Thesis 2022-2023 about Egocentric Activity Recognition and Detection usin
 
 Our code is built upon the codebase from [ActionFormer](https://github.com/happyharrycn/actionformer_release) and [Detectron2](https://github.com/facebookresearch/detectron2).
 
+The proposed solution can achieve performance comparable to current state-of-the-art models, such as [ActionFormer](https://github.com/happyharrycn/actionformer_release) and [TriDet](https://github.com/dingfengshi/TriDet), using fewer parameters and with lower latencies (see section [Comparison](#comparison)).
+
 ## Requirements
 
 - Linux (Ubuntu 22.04)
@@ -103,3 +105,20 @@ The results (mAP at tIoUs) should be
 |---------------------|-------|-------|-------|-------|-------|-------|
 | Model (verb) | 28.01 | 26.93 | 25.57 | 23.45 | 19.31 | 24.66 |
 | Model (noun) | 25.94 | 24.91 | 23.26 | 20.54 | 17.42 | 22.41 |
+
+## Comparison
+We compared the proposed solution with current sota models: [ActionFormer](https://github.com/happyharrycn/actionformer_release) and [TriDet](https://github.com/dingfengshi/TriDet).
+
+The results were obtained using the same hardware (Nvidia GeForce GTX 1650) testing the whole models during inference on an EPIC-KITCHEN's video.
+
+| Method  (verbs)            |  GMACs  |  Parameters (M)  |  Latency (ms)  | 
+|---------------------|-------|-------|-------|
+| ActionFormer | 46.6 | 29.76 | 502.36 |
+| TriDet | 48.08 | 18.59 | 636.28 |
+| *Ours* | 38.74 | 23.16 | 367.43 |
+
+| Method  (nouns)            |  GMACs  |  Parameters (M)  |  Latency (ms)  | 
+|---------------------|-------|-------|-------|
+| ActionFormer | 48.18 | 30.07 | 515.00 |
+| TriDet | 52.49 | 19.50 | 879.51 |
+| *Ours* | 40.30 | 23.47 | 383.94 |
